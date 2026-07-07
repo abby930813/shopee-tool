@@ -1,92 +1,100 @@
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import requests
+import re
 
-st.set_page_config(
-    page_title="蝦皮商品擷取工具 v3.0",
-    layout="wide"
+st.set_page_config(page_title="Shopee Tool v4.0", layout="wide")
+
+st.title("蝦皮商品擷取工具 v4.0")
+
+url = st.text_input(
+    "貼上蝦皮網址",
+    placeholder="https://shopee.tw/shopee_choice_hl?page=0..."
 )
 
-st.title("蝦皮商品擷取工具 v3.0")
+def get_brand(title):
+    title = title.replace("【蝦皮直營】", "").strip()
 
-st.info(
-    "貼入蝦皮商品資料文字內容，可自動整理品牌、品名、價格，並下載 Excel"
-)
-
-raw_text = st.text_area(
-    "貼上蝦皮商品內容",
-    height=350
-)
-
-def get_brand(product_name):
-    text = product_name.replace("【蝦皮直營】", "").strip()
-
-    if not text:
+    if not title:
         return ""
 
-    return text.split()[0]
+    return title.split()[0]
 
-if st.button("開始整理"):
+if st.button("開始擷取"):
 
-    if not raw_text.strip():
-        st.warning("請先貼入資料")
+    if not url:
+        st.warning("請輸入網址")
         st.stop()
 
-    lines = [
-        x.strip()
-        for x in raw_text.split("\n")
-        if x.strip()
-    ]
+    result = []
 
-    products = []
+    try:
 
-    current_name = None
+        headers = {
+            "User-Agent": "Mozilla/5.0"
+        }
 
-    for line in lines:
+        html = requests.get(
+            url,
+            headers=headers,
+            timeout=30
+        ).text
 
-        if "【蝦皮直營】" in line:
+        pattern = r'"name":"(.*?)".*?"price":(\d+)'
 
-            current_name = line
-
-            continue
-
-        if current_name:
-
-            if line.isdigit():
-
-                products.append({
-                    "品牌": get_brand(current_name),
-                    "品名": current_name,
-                    "價格": line
-                })
-
-                current_name = None
-
-    df = pd.DataFrame(products)
-
-    st.success(f"共整理 {len(df)} 筆商品")
-
-    st.dataframe(
-        df,
-        use_container_width=True
-    )
-
-    excel_buffer = BytesIO()
-
-    with pd.ExcelWriter(
-        excel_buffer,
-        engine="openpyxl"
-    ) as writer:
-
-        df.to_excel(
-            writer,
-            index=False,
-            sheet_name="Shopee"
+        matches = re.findall(
+            pattern,
+            html
         )
 
-    st.download_button(
-        label="下載 Excel",
-        data=excel_buffer.getvalue(),
-        file_name="shopee_products.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-    )
+        for item in matches:
+
+            title = item[0]
+
+            price = round(
+                int(item[1]) / 100000
+            )
+
+            result.append({
+                "品牌": get_brand(title),
+                "品名": title,
+                "價格": price,
+                "商品網址": url
+            })
+
+        df = pd.DataFrame(result)
+
+        df = df.drop_duplicates()
+
+        st.success(
+            f"共抓取 {len(df)} 筆商品"
+        )
+
+        st.dataframe(
+            df,
+            use_container_width=True
+        )
+
+        output = BytesIO()
+
+        with pd.ExcelWriter(
+            output,
+            engine="openpyxl"
+        ) as writer:
+
+            df.to_excel(
+                writer,
+                index=False
+            )
+
+        st.download_button(
+            "下載 Excel",
+            output.getvalue(),
+            "shopee_products.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+
+    except Exception as e:
+
+        st.error(str(e))
